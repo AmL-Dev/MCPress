@@ -9,7 +9,7 @@ import ChatInterface from '@/components/chat/ChatInterface';
 export default function PortalPage() {
   const [selectedRole, setSelectedRole] = useState<UserRole>(null);
   const [isOnboarding, setIsOnboarding] = useState(false);
-  const [showChat, setShowChat] = useState(true);
+  const [showChat, setShowChat] = useState(false);
 
   const handleRoleSelect = (role: UserRole) => {
     setSelectedRole(role);
