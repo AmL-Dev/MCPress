@@ -37,8 +37,15 @@ class ArticleExtractor:
             ExtractionError: If the URL cannot be fetched
         """
         try:
-            # Jina.ai reader URL format
-            jina_url = f"{self.jina_reader_url}{url}"
+            # Clean the URL - remove protocol if already present since Jina.ai expects just the domain/path
+            clean_url = url
+            if clean_url.startswith("https://"):
+                clean_url = clean_url[8:]  # Remove "https://"
+            elif clean_url.startswith("http://"):
+                clean_url = clean_url[7:]  # Remove "http://"
+            
+            # Jina.ai reader URL format - it expects the URL without protocol
+            jina_url = f"{self.jina_reader_url}{clean_url}"
             
             async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.get(jina_url)
