@@ -108,18 +108,24 @@ Add to your Claude Desktop configuration (`claude_desktop_config.json`):
 
 ### Cursor
 
-Add to your Cursor MCP settings:
+Add to your Cursor MCP settings. Use the venv Python path to ensure dependencies are available:
 
 ```json
 {
   "mcpServers": {
     "mcpress": {
-      "command": "python",
+      "command": "/path/to/MCPress/mcp-server/.venv/bin/python",
       "args": ["-m", "mcpress.server"],
       "cwd": "/path/to/MCPress/mcp-server"
     }
   }
 }
+```
+
+Or install the package globally in your Cursor Python:
+
+```bash
+/path/to/python -m pip install -e /path/to/MCPress/mcp-server
 ```
 
 ## Development
