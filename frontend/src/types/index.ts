@@ -33,3 +33,6 @@ export interface MCPConfig {
         token?: string;
     };
 }
+
+// Re-export article types
+export * from './article';

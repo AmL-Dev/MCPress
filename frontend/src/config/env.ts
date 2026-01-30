@@ -14,6 +14,8 @@ export const env = {
     // MCP Server configuration
     mcpServerUrl: process.env.MCP_SERVER_URL || "",
     mcpServerTransport: process.env.MCP_SERVER_TRANSPORT || "sse",
+    // Backend API configuration
+    apiUrl: process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000",
 };
 
 // Simple validation to ensure required environment variables are set

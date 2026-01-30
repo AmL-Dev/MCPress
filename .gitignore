@@ -11,3 +11,4 @@ frontend/.env
 
 # Cursor
 .cursor/plans
+backend/venv
