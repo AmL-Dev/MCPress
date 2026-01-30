@@ -46,9 +46,13 @@ class ArticleExtractor:
             
             # Jina.ai reader URL format - it expects the URL without protocol
             jina_url = f"{self.jina_reader_url}{clean_url}"
-            
+            headers = {}
+            key = (settings.jina_api_key or "").strip()
+            if key:
+                headers["Authorization"] = f"Bearer {key}"
+                headers["x-api-key"] = key  # some Jina endpoints accept this
             async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.get(jina_url)
+                response = await client.get(jina_url, headers=headers)
                 response.raise_for_status()
                 
                 content = response.text

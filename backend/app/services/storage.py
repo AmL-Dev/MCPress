@@ -66,8 +66,14 @@ class ArticleStorage:
             return org.id
             
         except Exception as e:
-            raise StorageError(f"Failed to create organization: {str(e)}")
-    
+            err = str(e)
+            if "getaddrinfo" in err or "11001" in err or (isinstance(e, OSError) and getattr(e, "errno", None) == 11001):
+                raise StorageError(
+                    "Failed to create organization: database host could not be resolved (DNS error). "
+                    "Check backend .env: DATABASE_HOST or DATABASE_URL must point to your Supabase DB host (e.g. your-project-ref.supabase.co)."
+                ) from e
+            raise StorageError(f"Failed to create organization: {err}") from e
+
     async def _get_or_create_category(
         self,
         session: AsyncSession,
@@ -107,7 +113,13 @@ class ArticleStorage:
             return category.id
             
         except Exception as e:
-            raise StorageError(f"Failed to create category: {str(e)}")
+            err = str(e)
+            if "getaddrinfo" in err or "11001" in err or (isinstance(e, OSError) and getattr(e, "errno", None) == 11001):
+                raise StorageError(
+                    "Failed to create category: database host could not be resolved (DNS error). "
+                    "Check backend .env: DATABASE_HOST or DATABASE_URL must point to your Supabase DB host (e.g. your-project-ref.supabase.co)."
+                ) from e
+            raise StorageError(f"Failed to create category: {err}") from e
     
     async def _parse_date(self, date_string: Optional[str]) -> Optional[date]:
         """

@@ -62,6 +62,17 @@ uvicorn app.main:app --reload
 The API will be available at `http://localhost:8000`
 API docs at `http://localhost:8000/docs`
 
+### Populate articles from URLs
+
+With the server running, you can bulk-import articles from a predefined list of news URLs:
+
+```bash
+# From backend directory
+python scripts/populate_articles.py
+```
+
+Optional env vars: `BACKEND_URL` (default `http://localhost:8000`), `DELAY_SECS` (default `2`, seconds between requests).
+
 ## Environment Variables
 
 | Variable | Description | Required |

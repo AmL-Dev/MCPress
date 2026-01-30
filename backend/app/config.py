@@ -3,7 +3,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import List
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings
 
 # Project root and backend dir for .env lookup
@@ -93,9 +93,18 @@ class Settings(BaseSettings):
     openai_embedding_model: str = "text-embedding-3-small"
     openai_embedding_dimensions: int = 1536
     
-    # Jina.ai configuration
+    # Jina.ai configuration (API key optional; may bypass 451 blocks on some domains)
     jina_reader_url: str = "https://r.jina.ai/http://"
-    
+    jina_api_key: str = Field(default="", validation_alias="JINA_API_KEY")
+
+    @field_validator("jina_api_key", mode="before")
+    @classmethod
+    def strip_jina_api_key(cls, v: object) -> str:
+        """Strip whitespace so accidental spaces/newlines in .env don't break auth."""
+        if v is None:
+            return ""
+        return str(v).strip()
+
     # CORS: store as str in env (comma-separated), expose as list via property
     cors_origins_str: str = Field(
         default="http://localhost:3000,http://localhost:8000",
