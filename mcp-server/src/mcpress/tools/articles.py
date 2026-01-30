@@ -1,5 +1,6 @@
 """Article tools for MCPress MCP server."""
 
+import logging
 from typing import Any, List
 
 from fastmcp import FastMCP
@@ -7,6 +8,8 @@ from openai import OpenAI, OpenAIError
 from supabase import create_client
 
 from mcpress.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class EmbeddingError(Exception):
@@ -39,19 +42,28 @@ class Embedder:
         Raises:
             EmbeddingError: If embedding generation fails
         """
+        logger.debug(f"Generating embedding with model={self.model}, dimensions={self.dimensions}")
         try:
             response = self.client.embeddings.create(
                 model=self.model,
                 input=text,
                 dimensions=self.dimensions,
+                timeout=30.0,  # 30 second timeout
             )
 
             embedding = response.data[0].embedding
+            logger.debug(f"Embedding generated successfully, length={len(embedding)}")
             return embedding
 
         except OpenAIError as e:
+            error_msg = str(e).lower()
+            if "timeout" in error_msg or "timed out" in error_msg:
+                logger.error(f"OpenAI API timeout: {str(e)}")
+                raise EmbeddingError(f"OpenAI API timeout: {str(e)}")
+            logger.error(f"OpenAI API error: {str(e)}")
             raise EmbeddingError(f"OpenAI API error: {str(e)}")
         except Exception as e:
+            logger.error(f"Unexpected embedding error: {str(e)}")
             raise EmbeddingError(f"Unexpected embedding error: {str(e)}")
 
 
@@ -79,14 +91,19 @@ def register_tools(mcp: FastMCP) -> None:
         Returns:
             List of matching articles with title, summary, author, and metadata
         """
+        logger.info(f"search_articles called with query='{query}', limit={limit}, threshold={similarity_threshold}")
+
         try:
             # Generate embedding for the query
             embedder = Embedder()
+            logger.debug("Generating embedding for query")
             query_embedding = embedder.generate(query)
+            logger.info(f"Embedding generated successfully, dimension count: {len(query_embedding)}")
 
             client = get_supabase_client()
 
             # Call the pgvector similarity search function
+            logger.debug("Calling match_article_embeddings RPC")
             result = (
                 client.rpc(
                     "match_article_embeddings",
@@ -99,7 +116,10 @@ def register_tools(mcp: FastMCP) -> None:
                 .execute()
             )
 
+            logger.info(f"RPC call completed, data: {result.data}")
+
             if not result.data:
+                logger.info("No matching articles found")
                 return []
 
             # Format the results
@@ -119,11 +139,19 @@ def register_tools(mcp: FastMCP) -> None:
                 }
                 articles.append(article)
 
+            logger.info(f"Returning {len(articles)} articles")
             return articles
 
         except EmbeddingError as e:
+            logger.error(f"Embedding error: {str(e)}")
             return [{"error": f"Embedding error: {str(e)}"}]
         except Exception as e:
+            error_type = type(e).__name__
+            error_msg = str(e).lower()
+            if "timeout" in error_msg or "timed out" in error_msg or error_type in ("TimeoutError", "CancelledError"):
+                logger.error(f"Request timed out: {str(e)}")
+                return [{"error": f"Request timed out. Please try again or reduce the scope of your search."}]
+            logger.error(f"Search failed: {str(e)}")
             return [{"error": f"Search failed: {str(e)}"}]
 
     @mcp.tool
