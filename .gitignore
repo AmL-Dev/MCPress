@@ -5,3 +5,9 @@
 
 .env
 __pycache__
+
+# Frontend
+frontend/.env
+
+# Cursor
+.cursor/plans
