@@ -11,7 +11,7 @@ import { ToolResult } from "./ToolResult";
 function ChatInterface() {
     const [input, setInput] = useState("");
     const scrollRef = useRef<HTMLDivElement>(null);
-    const { messages, append, error, status, reload, stop } = useChat({
+    const { messages, sendMessage, error, status, reload, stop } = useChat({
         api: "/api/chat",
     });
 
@@ -21,19 +21,6 @@ function ChatInterface() {
             scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
         }
     }, [messages]);
-
-    if (error) {
-        return (
-            <div className="flex items-center justify-center p-6 text-red-500 bg-red-50/50 dark:bg-red-900/20 rounded-2xl border border-red-100 dark:border-red-900/30 max-w-2xl mx-auto">
-                <div className="flex items-center gap-3">
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    <p className="font-medium">Error: {error.message}</p>
-                </div>
-            </div>
-        );
-    }
 
     return (
         <div className="flex flex-col w-full max-w-3xl mx-auto bg-white dark:bg-zinc-900 rounded-3xl shadow-xl shadow-zinc-200/50 dark:shadow-none border border-zinc-200 dark:border-zinc-800 overflow-hidden h-[80vh]">
@@ -50,7 +37,7 @@ function ChatInterface() {
                         </p>
                     </div>
                 </div>
-                {status === "streaming" && (
+                {(status === "submitted" || status === "streaming") && (
                     <button
                         onClick={stop}
                         className="p-2 text-zinc-400 hover:text-red-500 transition-colors"
@@ -69,6 +56,22 @@ function ChatInterface() {
                 ref={scrollRef}
                 className="flex-1 p-6 overflow-y-auto space-y-6 scroll-smooth"
             >
+                {error && (
+                    <div className="p-4 mb-4 text-sm text-red-800 rounded-2xl bg-red-50 dark:bg-red-900/20 dark:text-red-400 border border-red-100 dark:border-red-800 flex items-center gap-3">
+                        <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <div>
+                            <span className="font-bold">Error:</span> {error.message}
+                            <button 
+                                onClick={() => reload()} 
+                                className="ml-3 underline hover:no-underline font-bold"
+                            >
+                                Retry
+                            </button>
+                        </div>
+                    </div>
+                )}
                 {messages.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-full text-center space-y-4">
                         <div className="w-16 h-16 bg-blue-50 dark:bg-blue-900/20 rounded-2xl flex items-center justify-center">
@@ -151,7 +154,7 @@ function ChatInterface() {
                         </div>
                     ))
                 )}
-                {status === "streaming" && messages[messages.length - 1]?.role === "user" && (
+                {(status === "submitted" || status === "streaming") && messages[messages.length - 1]?.role === "user" && (
                     <div className="flex justify-start">
                         <div className="bg-zinc-100 dark:bg-zinc-800 rounded-2xl px-5 py-3.5 flex items-center gap-2">
                             <span className="flex h-1.5 w-1.5 rounded-full bg-zinc-400 animate-bounce"></span>
@@ -167,8 +170,8 @@ function ChatInterface() {
                 <form
                     onSubmit={(e) => {
                         e.preventDefault();
-                        if (input.trim() && status !== "streaming") {
-                            append({ role: "user", content: input.trim() });
+                        if (input.trim() && status === "ready") {
+                            sendMessage({ text: input.trim() });
                             setInput("");
                         }
                     }}
@@ -179,15 +182,15 @@ function ChatInterface() {
                         value={input}
                         onChange={(e) => setInput(e.currentTarget.value)}
                         placeholder="Type a message..."
-                        disabled={status === "streaming"}
+                        disabled={status !== "ready"}
                         className="w-full pl-5 pr-14 py-4 bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border-none rounded-2xl focus:ring-2 focus:ring-blue-500/50 transition-all placeholder:text-zinc-400 dark:placeholder:text-zinc-500"
                     />
                     <button
                         type="submit"
-                        disabled={status === "streaming" || !input.trim()}
+                        disabled={status !== "ready" || !input.trim()}
                         className="absolute right-2 p-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:bg-zinc-200 dark:disabled:bg-zinc-700 disabled:text-zinc-400 transition-all shadow-lg shadow-blue-200 dark:shadow-none"
                     >
-                        {status === "streaming" ? (
+                        {status !== "ready" ? (
                             <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
                                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
                                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
@@ -199,9 +202,6 @@ function ChatInterface() {
                         )}
                     </button>
                 </form>
-                <p className="mt-3 text-[10px] text-center text-zinc-400 dark:text-zinc-500 font-medium uppercase tracking-widest">
-                    MCPress AI Assistant • Powered by Vercel AI SDK
-                </p>
             </div>
         </div>
     );
