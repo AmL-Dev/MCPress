@@ -1,11 +1,58 @@
 """Article tools for MCPress MCP server."""
 
-from typing import Any
+from typing import Any, List
 
 from fastmcp import FastMCP
+from openai import OpenAI, OpenAIError
 from supabase import create_client
 
 from mcpress.config import get_settings
+
+
+class EmbeddingError(Exception):
+    """Custom exception for embedding errors."""
+
+    pass
+
+
+class Embedder:
+    """Service for generating text embeddings using OpenAI."""
+
+    def __init__(self):
+        settings = get_settings()
+        if not settings.openai_api_key:
+            raise EmbeddingError("OPENAI_API_KEY environment variable is required")
+        self.client = OpenAI(api_key=settings.openai_api_key)
+        self.model = settings.openai_embedding_model
+        self.dimensions = settings.openai_embedding_dimensions
+
+    def generate(self, text: str) -> List[float]:
+        """
+        Generate embedding for the given text.
+
+        Args:
+            text: Text to generate embedding for
+
+        Returns:
+            List of embedding dimensions
+
+        Raises:
+            EmbeddingError: If embedding generation fails
+        """
+        try:
+            response = self.client.embeddings.create(
+                model=self.model,
+                input=text,
+                dimensions=self.dimensions,
+            )
+
+            embedding = response.data[0].embedding
+            return embedding
+
+        except OpenAIError as e:
+            raise EmbeddingError(f"OpenAI API error: {str(e)}")
+        except Exception as e:
+            raise EmbeddingError(f"Unexpected embedding error: {str(e)}")
 
 
 def get_supabase_client():
@@ -18,7 +65,7 @@ def register_tools(mcp: FastMCP) -> None:
     """Register all article tools with the MCP server."""
 
     @mcp.tool
-    def search_articles(query: str, limit: int = 10) -> list[dict[str, Any]]:
+    def search_articles(query: str, limit: int = 10, similarity_threshold: float = 0.5) -> list[dict[str, Any]]:
         """
         Search news articles by semantic similarity.
 
@@ -27,14 +74,57 @@ def register_tools(mcp: FastMCP) -> None:
         Args:
             query: The search query text
             limit: Maximum number of articles to return (default: 10)
+            similarity_threshold: Minimum similarity score (0.0 to 1.0, default: 0.5)
 
         Returns:
             List of matching articles with title, summary, author, and metadata
         """
-        # Vector search is not yet implemented.
-        # To enable, add OpenAI embedding support and create a Supabase RPC function
-        # for cosine similarity search against the article_embeddings table.
-        return []
+        try:
+            # Generate embedding for the query
+            embedder = Embedder()
+            query_embedding = embedder.generate(query)
+
+            client = get_supabase_client()
+
+            # Call the pgvector similarity search function
+            result = (
+                client.rpc(
+                    "match_article_embeddings",
+                    {
+                        "query_embedding": query_embedding,
+                        "match_threshold": similarity_threshold,
+                        "match_count": limit,
+                    },
+                )
+                .execute()
+            )
+
+            if not result.data:
+                return []
+
+            # Format the results
+            articles = []
+            for row in result.data:
+                article = {
+                    "id": row["article_id"],
+                    "title": row["title"],
+                    "author": row["author"],
+                    "published_date": row["published_date"],
+                    "summary": row["summary"],
+                    "url": row["url"],
+                    "keywords": row["keywords"],
+                    "category": row["category_name"],
+                    "media_source": row["media_source"],
+                    "similarity": row["similarity"],
+                }
+                articles.append(article)
+
+            return articles
+
+        except EmbeddingError as e:
+            return [{"error": f"Embedding error: {str(e)}"}]
+        except Exception as e:
+            return [{"error": f"Search failed: {str(e)}"}]
 
     @mcp.tool
     def get_article(article_id: str) -> dict[str, Any] | None:
