@@ -6,7 +6,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.database.connection import init_db, close_db
 from app.api.routes import router as articles_router
 
 
@@ -21,21 +20,12 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan context manager."""
-    # Startup
     logger.info("Starting up MCPress backend...")
-    try:
-        await init_db()
-        logger.info("Database connection initialized")
-    except Exception as e:
-        logger.warning(f"Database initialization failed: {e}")
-        # Continue anyway - database might not be set up yet
-    
+    # Ensure Chroma persist directory exists
+    settings.chroma_persist_dir.mkdir(parents=True, exist_ok=True)
+    logger.info("Chroma storage ready")
     yield
-    
-    # Shutdown
     logger.info("Shutting down MCPress backend...")
-    await close_db()
-    logger.info("Database connections closed")
 
 
 # Create FastAPI application

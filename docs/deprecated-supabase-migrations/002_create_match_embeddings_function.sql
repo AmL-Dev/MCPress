@@ -1,6 +1,7 @@
 -- Migration: 002_create_match_embeddings_function
 -- Description: Create RPC function for pgvector cosine similarity search
 -- Created: 2026-01-30
+-- DEPRECATED: Storage is now Chroma; this file is archived for reference only.
 
 -- Drop function if exists to allow re-running migration
 drop function if exists match_article_embeddings(vector, float, int);

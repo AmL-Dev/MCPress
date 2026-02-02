@@ -3,7 +3,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import List
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import field_validator
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 # Project root and backend dir for .env lookup
@@ -18,115 +19,59 @@ def _split_comma_stripped(s: str) -> List[str]:
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
-    
+
     # Application settings
     app_host: str = "0.0.0.0"
     app_port: int = 8000
     debug: bool = False
-    
-    # Supabase configuration
-    supabase_url: str  # Web URL: https://your-project.supabase.co
-    supabase_service_key: str = Field(
-        validation_alias=AliasChoices("SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SERVICE_KEY"),
+
+    # Chroma storage (local, no Supabase/Postgres)
+    chroma_persist_dir: Path = Field(
+        default=Path("./data/chroma"),
+        validation_alias="CHROMA_PERSIST_DIR",
     )
-    supabase_anon_key: str
 
-    # Database: set DATABASE_URL (full URI from dashboard) OR individual components
-    database_url_override: str = Field(default="", validation_alias="DATABASE_URL")
-    database_host: str = ""
-    database_port: int = 5432
-    database_user: str = "postgres"
-    database_password: str = ""
-    database_name: str = "postgres"
+    @field_validator("chroma_persist_dir", mode="before")
+    @classmethod
+    def coerce_chroma_path(cls, v):
+        if isinstance(v, str):
+            return Path(v)
+        return v
 
-    def _db_host(self) -> str:
-        """Supabase DB host: use db.<ref>.supabase.co if host is <ref>.supabase.co."""
-        h = self.database_host.strip()
-        if h and not h.startswith("db.") and ".supabase.co" in h:
-            return f"db.{h}"
-        return h or "localhost"
-
-    def _built_database_url(self) -> str:
-        """Build PostgreSQL URL from host/user/password (sync, with sslmode)."""
-        host = self._db_host()
-        if self.database_password:
-            return f"postgresql://{self.database_user}:{self.database_password}@{host}:{self.database_port}/{self.database_name}?sslmode=require"
-        return f"postgresql://{self.database_user}@{host}:{self.database_port}/{self.database_name}?sslmode=require"
-
-    def _built_async_database_url(self) -> str:
-        """Build async PostgreSQL URL from host/user/password."""
-        host = self._db_host()
-        if self.database_password:
-            return f"postgresql+asyncpg://{self.database_user}:{self.database_password}@{host}:{self.database_port}/{self.database_name}"
-        return f"postgresql+asyncpg://{self.database_user}@{host}:{self.database_port}/{self.database_name}"
-
-    def _is_placeholder_url(self, url: str) -> bool:
-        """True if URL contains placeholder host (e.g. aws-0-XX) that won't resolve."""
-        if not url or "XX" in url or "your-" in url or ".example." in url:
-            return True
-        return False
-
-    @property
-    def database_url(self) -> str:
-        """PostgreSQL connection URL (sync). Prefer DATABASE_URL if set and valid."""
-        u = (self.database_url_override or "").strip()
-        if u and not self._is_placeholder_url(u):
-            if "?" not in u and "postgresql://" in u:
-                u = f"{u}?sslmode=require"
-            return u
-        return self._built_database_url()
-
-    @property
-    def async_database_url(self) -> str:
-        """Async PostgreSQL connection URL. Prefer DATABASE_URL if set and valid."""
-        u = (self.database_url_override or "").strip()
-        if u and not self._is_placeholder_url(u):
-            return u.replace("postgresql://", "postgresql+asyncpg://", 1)
-        return self._built_async_database_url()
-    
     # Groq API configuration
     groq_api_key: str
     groq_model: str = "llama-3.1-8b-instant"
-    
+
     # OpenAI API configuration
     openai_api_key: str
     openai_embedding_model: str = "text-embedding-3-small"
     openai_embedding_dimensions: int = 1536
-    
-    # Jina.ai configuration (API key optional; may bypass 451 blocks on some domains)
+
+    # Jina.ai configuration
     jina_reader_url: str = "https://r.jina.ai/http://"
     jina_api_key: str = Field(default="", validation_alias="JINA_API_KEY")
 
-    @field_validator("jina_api_key", mode="before")
-    @classmethod
-    def strip_jina_api_key(cls, v: object) -> str:
-        """Strip whitespace so accidental spaces/newlines in .env don't break auth."""
-        if v is None:
-            return ""
-        return str(v).strip()
-
-    # CORS: store as str in env (comma-separated), expose as list via property
+    # CORS: store as str in env (comma-separated)
     cors_origins_str: str = Field(
-        default="http://localhost:3000,http://localhost:8000",
+        default="http://localhost:3000,http://localhost:3001,http://localhost:8000",
         validation_alias="CORS_ORIGINS",
     )
-    
-    # Allowed categories: store as str in env (comma-separated), expose as list via property
+
+    # Allowed categories (comma-separated)
     allowed_categories_str: str = Field(
         default="news,tech,sports,business,politics,entertainment,health,science",
         validation_alias="ALLOWED_CATEGORIES",
     )
-    
+
     @property
     def cors_origins(self) -> List[str]:
         return _split_comma_stripped(self.cors_origins_str)
-    
+
     @property
     def allowed_categories(self) -> List[str]:
         return _split_comma_stripped(self.allowed_categories_str)
 
     class Config:
-        """Pydantic config."""
         env_file = [
             _PROJECT_ROOT / ".env",
             _BACKEND_DIR / ".env",

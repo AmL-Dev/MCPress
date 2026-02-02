@@ -1,6 +1,7 @@
 -- Migration: 001_create_schema
 -- Description: Create initial database schema for MCPress
 -- Created: 2024-01-30
+-- DEPRECATED: Storage is now Chroma; this file is archived for reference only.
 
 -- Enable pgvector extension for vector storage
 -- Note: This requires pgvector extension to be installed on Supabase
