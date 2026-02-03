@@ -5,8 +5,8 @@ This repo is a **monorepo**: the Next.js app lives in `frontend/`. Vercel must u
 ## 1. Set the Root Directory (required)
 
 1. Open your project on [Vercel](https://vercel.com).
-2. Go to **Settings** → **General**.
-3. Under **Root Directory**, click **Edit**.
+2. Go to **Settings** (tab) → **Build and Deployment** (in the left sidebar — not General).
+3. Scroll to **Root Directory**, click **Edit**.
 4. Set it to **`frontend`** (no leading slash).
 5. Save.
 

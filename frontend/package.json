@@ -9,23 +9,25 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@ai-sdk/groq": "^3.0.21",
     "@ai-sdk/mcp": "^1.0.15",
     "@ai-sdk/openai": "^1.0.0",
     "@ai-sdk/react": "^1.0.0",
-    "ai": "^4.0.0",
-    "next": "14.2.13",
+    "ai": "^6.0.67",
+    "next": "^16.1.6",
     "react": "^18",
     "react-dom": "^18",
+    "react-markdown": "^10.1.0",
     "zod": "^3.0.0"
   },
   "devDependencies": {
-    "typescript": "^5",
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "eslint": "^9.39.2",
+    "eslint-config-next": "^16.1.6",
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
-    "eslint": "^8",
-    "eslint-config-next": "14.2.13"
+    "typescript": "^5"
   }
 }

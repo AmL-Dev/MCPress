@@ -1,8 +1,8 @@
 """Article API routes for extraction and storage."""
-from typing import List
+from typing import List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 
 from app.models.article import (
     ExtractRequest,
@@ -114,6 +114,76 @@ async def save_article(request: SaveRequest) -> SaveResponse:
 
 
 @router.get(
+    "/search",
+    summary="Search Articles",
+    description="Semantic search with optional filters (category, source, since).",
+)
+async def search_articles(
+    q: str = Query(..., description="Search query text"),
+    limit: int = Query(10, ge=1, le=50),
+    category: Optional[str] = Query(None),
+    source: Optional[str] = Query(None, description="Organization / media source name"),
+    since: Optional[str] = Query(None, description="ISO date, e.g. 2024-01-01"),
+    similarity_threshold: float = Query(0.5, ge=0, le=1),
+):
+    """Search articles by semantic similarity with optional metadata filters."""
+    storage = get_storage()
+    where = None
+    conditions = []
+    if category:
+        conditions.append({"category": category.strip().lower()})
+    if source:
+        conditions.append({"organization": source.strip()})
+    if since:
+        conditions.append({"published_date": {"$gte": since}})
+    if conditions:
+        where = {"$and": conditions} if len(conditions) > 1 else conditions[0]
+    try:
+        articles = await storage.search_articles(
+            query_text=q,
+            n_results=limit,
+            where=where,
+            similarity_threshold=similarity_threshold,
+        )
+        return articles
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
+        )
+
+
+@router.get(
+    "",
+    summary="List Articles",
+    description="List articles with optional filters (category, source, author) and pagination.",
+)
+async def list_articles(
+    category: Optional[str] = Query(None),
+    source: Optional[str] = Query(None, description="Organization / media source"),
+    author: Optional[str] = Query(None),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
+    """List articles with optional filters and pagination."""
+    storage = get_storage()
+    try:
+        articles = await storage.list_articles(
+            category=category,
+            source=source,
+            author=author,
+            limit=limit,
+            offset=offset,
+        )
+        return articles
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
+        )
+
+
+@router.get(
     "/{article_id}",
     responses={
         404: {"model": ErrorResponse, "description": "Article not found"},
@@ -145,23 +215,7 @@ async def get_article(article_id: UUID):
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Article with ID {article_id} not found",
             )
-        
-        # Return article data (simplified - can be expanded)
-        return {
-            "id": str(article.id),
-            "url": article.url,
-            "title": article.title,
-            "author": article.author,
-            "published_date": article.published_date.isoformat() if article.published_date else None,
-            "content": article.content,
-            "summary": article.summary,
-            "keywords": article.keywords,
-            "category": article.category.name if article.category else None,
-            "organization": article.organization.name if article.organization else None,
-            "image_url": article.image_url,
-            "created_at": article.created_at.isoformat(),
-            "updated_at": article.updated_at.isoformat(),
-        }
+        return article
         
     except StorageError as e:
         raise HTTPException(

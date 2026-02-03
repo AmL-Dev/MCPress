@@ -1,18 +1,17 @@
-"""Storage service for database operations."""
-from datetime import date, datetime
-from typing import Optional, Tuple
+"""Storage service using Chroma for article persistence and search."""
+from datetime import datetime
+from typing import Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.exc import IntegrityError
-
-from app.config import settings
-from app.database.connection import get_async_session_context
-from app.database.connection import async_engine
-from app.models.database import Article, ArticleEmbedding, Category, Organization
 from app.models.article import SaveRequest, OrganizationInfo
 from app.services.embedder import get_embedder, EmbeddingError
+from app.store.chroma_store import (
+    add,
+    get as store_get,
+    get_by_url as store_get_by_url,
+    query as store_query,
+    list_articles as store_list_articles,
+)
 
 
 class StorageError(Exception):
@@ -20,287 +19,140 @@ class StorageError(Exception):
     pass
 
 
+def _parse_date(date_string: Optional[str]) -> Optional[str]:
+    """Return ISO date string or None."""
+    if not date_string:
+        return None
+    date_string = date_string.strip()
+    if not date_string:
+        return None
+    # Already ISO or pass through
+    return date_string
+
+
+def _article_from_store(row: dict) -> dict:
+    """Map Chroma store row to API article shape."""
+    meta = row.get("metadata") or {}
+    content = row.get("document") or ""
+    return {
+        "id": row.get("id"),
+        "url": meta.get("url", ""),
+        "title": meta.get("title", ""),
+        "author": meta.get("author") or None,
+        "published_date": meta.get("published_date") or None,
+        "content": content,
+        "summary": meta.get("summary", ""),
+        "keywords": [k.strip() for k in (meta.get("keywords") or "").split(",") if k.strip()],
+        "category": meta.get("category") or None,
+        "organization": meta.get("organization") or None,
+        "image_url": meta.get("image_url") or None,
+        "created_at": meta.get("created_at", ""),
+        "updated_at": meta.get("updated_at", ""),
+    }
+
+
 class ArticleStorage:
-    """Service for storing articles and embeddings in the database."""
-    
+    """Service for storing and retrieving articles via Chroma."""
+
     def __init__(self):
         self.embedder = get_embedder()
-    
-    async def _get_or_create_organization(
-        self,
-        session: AsyncSession,
-        org_info: Optional[OrganizationInfo],
-    ) -> Optional[UUID]:
-        """
-        Get or create an organization by email.
-        
-        Args:
-            session: Database session
-            org_info: Organization information
-            
-        Returns:
-            Organization ID or None if no organization provided
-        """
-        if not org_info:
-            return None
-        
-        try:
-            # Try to find existing organization
-            result = await session.execute(
-                select(Organization).where(Organization.email == org_info.email)
-            )
-            existing = result.scalar_one_or_none()
-            
-            if existing:
-                return existing.id
-            
-            # Create new organization
-            org = Organization(
-                id=uuid4(),
-                name=org_info.name,
-                email=org_info.email,
-            )
-            session.add(org)
-            await session.flush()
-            
-            return org.id
-            
-        except Exception as e:
-            err = str(e)
-            if "getaddrinfo" in err or "11001" in err or (isinstance(e, OSError) and getattr(e, "errno", None) == 11001):
-                raise StorageError(
-                    "Failed to create organization: database host could not be resolved (DNS error). "
-                    "Check backend .env: DATABASE_HOST or DATABASE_URL must point to your Supabase DB host (e.g. your-project-ref.supabase.co)."
-                ) from e
-            raise StorageError(f"Failed to create organization: {err}") from e
 
-    async def _get_or_create_category(
-        self,
-        session: AsyncSession,
-        category_name: str,
-    ) -> Optional[UUID]:
-        """
-        Get or create a category by name.
-        
-        Args:
-            session: Database session
-            category_name: Category name
-            
-        Returns:
-            Category ID
-        """
-        try:
-            # Normalize category name
-            category_name = category_name.lower().strip()
-            
-            # Try to find existing category
-            result = await session.execute(
-                select(Category).where(Category.name == category_name)
-            )
-            existing = result.scalar_one_or_none()
-            
-            if existing:
-                return existing.id
-            
-            # Create new category
-            category = Category(
-                id=uuid4(),
-                name=category_name,
-            )
-            session.add(category)
-            await session.flush()
-            
-            return category.id
-            
-        except Exception as e:
-            err = str(e)
-            if "getaddrinfo" in err or "11001" in err or (isinstance(e, OSError) and getattr(e, "errno", None) == 11001):
-                raise StorageError(
-                    "Failed to create category: database host could not be resolved (DNS error). "
-                    "Check backend .env: DATABASE_HOST or DATABASE_URL must point to your Supabase DB host (e.g. your-project-ref.supabase.co)."
-                ) from e
-            raise StorageError(f"Failed to create category: {err}") from e
-    
-    async def _parse_date(self, date_string: Optional[str]) -> Optional[date]:
-        """
-        Parse date string to date object.
-        
-        Args:
-            date_string: Date in ISO format or None
-            
-        Returns:
-            Date object or None
-        """
-        if not date_string:
-            return None
-        
-        try:
-            # Try ISO format first
-            return date.fromisoformat(date_string)
-        except ValueError:
-            # Try other common formats
-            formats = [
-                "%Y-%m-%d",
-                "%d/%m/%Y",
-                "%m/%d/%Y",
-                "%Y/%m/%d",
-            ]
-            
-            for fmt in formats:
-                try:
-                    return datetime.strptime(date_string, fmt).date()
-                except ValueError:
-                    continue
-            
-            return None
-    
     async def save_article(self, request: SaveRequest) -> UUID:
-        """
-        Save an article to the database with its embedding.
-        
-        Args:
-            request: Article save request with all article data
-            
-        Returns:
-            Saved article ID
-            
-        Raises:
-            StorageError: If save fails
-        """
+        """Save or update an article in Chroma. Returns article id (UUID)."""
+        now = datetime.utcnow().isoformat() + "Z"
+        existing = store_get_by_url(request.url)
+        if existing:
+            article_id = existing["id"]
+        else:
+            article_id = str(uuid4())
+
+        metadata = {
+            "url": request.url,
+            "title": request.title,
+            "author": request.author or "",
+            "published_date": _parse_date(request.published_date) or "",
+            "category": (request.category or "").strip().lower(),
+            "organization": (request.organization.name if request.organization else "") or "",
+            "summary": request.summary,
+            "keywords": ",".join(request.keywords) if request.keywords else "",
+            "image_url": request.image_url or "",
+            "created_at": existing["metadata"].get("created_at", now) if existing else now,
+            "updated_at": now,
+        }
+
         try:
-            async with get_async_session_context() as session:
-                async with session.begin():
-                    # Get or create organization
-                    organization_id = await self._get_or_create_organization(
-                        session,
-                        request.organization,
-                    )
-                    
-                    # Get or create category
-                    category_id = await self._get_or_create_category(
-                        session,
-                        request.category,
-                    )
-                    
-                    # Parse date
-                    published_date = await self._parse_date(request.published_date)
-                    
-                    # Check if article already exists
-                    result = await session.execute(
-                        select(Article).where(Article.url == request.url)
-                    )
-                    existing = result.scalar_one_or_none()
-                    
-                    if existing:
-                        # Update existing article
-                        existing.title = request.title
-                        existing.author = request.author
-                        existing.published_date = published_date
-                        existing.content = request.content
-                        existing.summary = request.summary
-                        existing.keywords = request.keywords
-                        existing.category_id = category_id
-                        existing.organization_id = organization_id
-                        existing.image_url = request.image_url
-                        
-                        article_id = existing.id
-                    else:
-                        # Create new article
-                        article = Article(
-                            id=uuid4(),
-                            url=request.url,
-                            title=request.title,
-                            author=request.author,
-                            published_date=published_date,
-                            content=request.content,
-                            summary=request.summary,
-                            keywords=request.keywords,
-                            category_id=category_id,
-                            organization_id=organization_id,
-                            image_url=request.image_url,
-                        )
-                        session.add(article)
-                        await session.flush()
-                        article_id = article.id
-                    
-                    # Generate embedding
-                    try:
-                        embedding_vector = self.embedder.generate(request.summary)
-                        
-                        # Check if embedding already exists
-                        emb_result = await session.execute(
-                            select(ArticleEmbedding).where(
-                                ArticleEmbedding.article_id == article_id
-                            )
-                        )
-                        existing_embedding = emb_result.scalar_one_or_none()
-                        
-                        if existing_embedding:
-                            # Update existing embedding
-                            existing_embedding.embedding = embedding_vector
-                        else:
-                            # Create new embedding
-                            embedding = ArticleEmbedding(
-                                id=uuid4(),
-                                article_id=article_id,
-                                embedding=embedding_vector,
-                            )
-                            session.add(embedding)
-                            
-                    except EmbeddingError as e:
-                        # Log warning but don't fail article save
-                        # Article can still be saved without embedding
-                        pass
-                    
-                    return article_id
-                    
-        except StorageError:
-            raise
-        except IntegrityError as e:
-            raise StorageError(f"Database integrity error: {str(e)}")
-        except Exception as e:
-            raise StorageError(f"Failed to save article: {str(e)}")
-    
-    async def get_article(self, article_id: UUID) -> Optional[Article]:
-        """
-        Get an article by ID.
-        
-        Args:
-            article_id: Article UUID
-            
-        Returns:
-            Article or None if not found
-        """
+            embedding = self.embedder.generate(request.summary)
+        except EmbeddingError:
+            # Use zero vector if embedding fails so document is still stored
+            embedding = [0.0] * 1536
+
+        add(
+            id=article_id,
+            embedding=embedding,
+            document=request.content,
+            metadata=metadata,
+        )
+        return UUID(article_id)
+
+    async def get_article(self, article_id: UUID) -> Optional[dict]:
+        """Get one article by id. Returns dict compatible with get_article route or None."""
+        row = store_get(str(article_id))
+        if not row:
+            return None
+        return _article_from_store(row)
+
+    async def get_article_by_url(self, url: str) -> Optional[dict]:
+        """Get one article by url. Returns dict or None."""
+        row = store_get_by_url(url)
+        if not row:
+            return None
+        return _article_from_store(row)
+
+    async def search_articles(
+        self,
+        query_text: str,
+        n_results: int = 10,
+        where: Optional[dict] = None,
+        similarity_threshold: Optional[float] = None,
+    ) -> list[dict]:
+        """Semantic search. Returns list of article dicts with similarity."""
         try:
-            async with get_async_session_context() as session:
-                result = await session.execute(
-                    select(Article).where(Article.id == article_id)
-                )
-                return result.scalar_one_or_none()
-        except Exception as e:
-            raise StorageError(f"Failed to get article: {str(e)}")
-    
-    async def get_article_by_url(self, url: str) -> Optional[Article]:
-        """
-        Get an article by URL.
-        
-        Args:
-            url: Article URL
-            
-        Returns:
-            Article or None if not found
-        """
-        try:
-            async with get_async_session_context() as session:
-                result = await session.execute(
-                    select(Article).where(Article.url == url)
-                )
-                return result.scalar_one_or_none()
-        except Exception as e:
-            raise StorageError(f"Failed to get article by URL: {str(e)}")
+            embedding = self.embedder.generate(query_text)
+        except EmbeddingError:
+            return []
+        rows = store_query(query_embedding=embedding, n_results=n_results, where=where)
+        out = []
+        for row in rows:
+            sim = row.get("similarity")
+            if similarity_threshold is not None and sim is not None and sim < similarity_threshold:
+                continue
+            article = _article_from_store({"id": row["id"], "document": row.get("document", ""), "metadata": row.get("metadata", {})})
+            article["similarity"] = sim
+            article["media_source"] = article.get("organization")
+            out.append(article)
+        return out
+
+    async def list_articles(
+        self,
+        category: Optional[str] = None,
+        source: Optional[str] = None,
+        author: Optional[str] = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> list[dict]:
+        """List articles with optional filters."""
+        conditions = []
+        if category:
+            conditions.append({"category": category.strip().lower()})
+        if source:
+            conditions.append({"organization": source.strip()})
+        if author:
+            conditions.append({"author": author.strip()})
+        where = {"$and": conditions} if len(conditions) > 1 else (conditions[0] if conditions else None)
+        rows = store_list_articles(where=where, limit=limit, offset=offset)
+        return [_article_from_store(r) for r in rows]
 
 
-# Singleton instance
 _storage: Optional[ArticleStorage] = None
 
 
