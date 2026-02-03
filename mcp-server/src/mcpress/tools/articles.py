@@ -18,7 +18,7 @@ def register_tools(mcp: FastMCP) -> None:
     def search_articles(
         query: str,
         limit: int = 10,
-        similarity_threshold: float = 0.5,
+        similarity_threshold: float = 0.0,
         category: str | None = None,
         source: str | None = None,
         since: str | None = None,
@@ -31,7 +31,7 @@ def register_tools(mcp: FastMCP) -> None:
         Args:
             query: The search query text
             limit: Maximum number of articles to return (default: 10)
-            similarity_threshold: Minimum similarity score (0.0 to 1.0, default: 0.5)
+            similarity_threshold: Minimum similarity score (0.0 to 1.0, default: 0.0 to return all top matches)
             category: Filter by category (e.g., tech, politics)
             source: Filter by media organization name
             since: Filter by published date (ISO date, e.g. 2024-01-01)

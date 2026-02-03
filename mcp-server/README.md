@@ -99,7 +99,20 @@ SUPABASE_ANON_KEY=your-supabase-anon-key
 python -m mcpress.server
 ```
 
-### HTTP Transport
+### HTTP Transport (for MCPress Chat)
+
+To connect the MCPress chat UI to this server, run with HTTP transport:
+
+```bash
+MCP_TRANSPORT=http uv run python -m mcpress
+```
+
+The server listens on port 8001 by default (use `MCP_PORT` to override). In the frontend `.env`, set:
+
+- `MCP_SERVER_URL=http://localhost:8001/mcp`
+- `MCP_SERVER_TRANSPORT=http`
+
+Or run with a custom port:
 
 ```bash
 python -c "from mcpress.server import mcp; mcp.run(transport='http', port=8000)"

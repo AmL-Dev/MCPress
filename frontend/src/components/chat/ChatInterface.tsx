@@ -2,18 +2,57 @@
 
 import { useChat } from "@ai-sdk/react";
 import { useState, useRef, useEffect } from "react";
+import ReactMarkdown from "react-markdown";
 import { ToolResult } from "./ToolResult";
+
+/** Convert 【title】 (url) or 【title】 url into markdown [title](url) so it renders as a clickable link. */
+function normalizeCitationLinks(text: string): string {
+    // 【title】 (https://...)
+    let out = text.replace(/【([^】]+)】\s*\((https?:\/\/[^)]+)\)/g, "[$1]($2)");
+    // 【title】 https://...
+    out = out.replace(/【([^】]+)】\s*(https?:\/\/\S+)/g, "[$1]($2)");
+    return out;
+}
+
+/** Whether we're waiting for the assistant (no reply yet). */
+function isWaitingForReply(status: string, messages: { role: string }[]): boolean {
+    if (status === "submitted") return true;
+    if (status === "streaming" && messages[messages.length - 1]?.role === "user") return true;
+    return false;
+}
 
 /**
  * ChatInterface component for AI-powered conversations.
- * Provides a modern, clean chat UI with streaming responses from OpenAI with MCP tool support.
+ * Provides a modern, clean chat UI with streaming responses from Groq with MCP tool support.
  */
 function ChatInterface() {
     const [input, setInput] = useState("");
+    const [showDelayedLoading, setShowDelayedLoading] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
-    const { messages, append, error, status, reload, stop } = useChat({
+    const loadingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const { messages, append, error, status, stop } = useChat({
         api: "/api/chat",
+        streamProtocol: "text",
     });
+
+    const waiting = isWaitingForReply(status, messages);
+    const canSend = status === "ready";
+
+    // Show cool loading animation only after 1s of waiting for first token
+    useEffect(() => {
+        if (waiting) {
+            loadingTimerRef.current = setTimeout(() => setShowDelayedLoading(true), 1000);
+        } else {
+            if (loadingTimerRef.current) {
+                clearTimeout(loadingTimerRef.current);
+                loadingTimerRef.current = null;
+            }
+            setShowDelayedLoading(false);
+        }
+        return () => {
+            if (loadingTimerRef.current) clearTimeout(loadingTimerRef.current);
+        };
+    }, [waiting]);
 
     // Auto-scroll to bottom when messages change
     useEffect(() => {
@@ -46,11 +85,11 @@ function ChatInterface() {
                     <div className="flex items-center gap-2">
                         <span className="flex h-2 w-2 rounded-full bg-green-500"></span>
                         <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
-                            GPT-4o + MCP Tools
+                            GPT-oss-120b + MCP Tools
                         </p>
                     </div>
                 </div>
-                {status === "streaming" && (
+                {!canSend && (
                     <button
                         onClick={stop}
                         className="p-2 text-zinc-400 hover:text-red-500 transition-colors"
@@ -110,23 +149,49 @@ function ChatInterface() {
                                         switch (part.type) {
                                             case "text":
                                                 return (
-                                                    <p
+                                                    <div
                                                         key={index}
-                                                        className="text-sm leading-relaxed whitespace-pre-wrap"
+                                                        className="text-sm leading-relaxed prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-a:text-blue-600 dark:prose-a:text-blue-400 prose-a:underline"
                                                     >
-                                                        {part.text}
-                                                    </p>
+                                                        <ReactMarkdown
+                                                            components={{
+                                                                a: ({ href, children }) => (
+                                                                    <a
+                                                                        href={href}
+                                                                        target="_blank"
+                                                                        rel="noopener noreferrer"
+                                                                        className="underline"
+                                                                    >
+                                                                        {children}
+                                                                    </a>
+                                                                ),
+                                                            }}
+                                                        >
+                                                            {normalizeCitationLinks(part.text)}
+                                                        </ReactMarkdown>
+                                                    </div>
                                                 );
                                             default:
-                                                if (part.type.startsWith("tool-")) {
-                                                    const toolName = part.type.replace("tool-", "");
-                                                    const isLoading = part.state === "input-available";
-                                                    const hasOutput = part.state === "output-available";
+                                                if (part.type === "tool-invocation") {
+                                                    const inv = part.toolInvocation;
+                                                    const isLoading =
+                                                        inv.state === "partial-call" || inv.state === "call";
+                                                    const hasOutput = inv.state === "result";
+                                                    const inputObj =
+                                                        typeof inv.args === "object" && inv.args !== null
+                                                            ? (inv.args as Record<string, unknown>)
+                                                            : undefined;
+                                                    const outputObj =
+                                                        hasOutput && "result" in inv
+                                                            ? typeof inv.result === "object" && inv.result !== null
+                                                                ? (inv.result as Record<string, unknown>)
+                                                                : undefined
+                                                            : undefined;
 
                                                     return (
                                                         <ToolResult
                                                             key={index}
-                                                            toolName={toolName}
+                                                            toolName={inv.toolName}
                                                             status={
                                                                 isLoading
                                                                     ? "loading"
@@ -134,12 +199,8 @@ function ChatInterface() {
                                                                       ? "success"
                                                                       : "error"
                                                             }
-                                                            input={part.input}
-                                                            output={
-                                                                hasOutput
-                                                                    ? part.output
-                                                                    : undefined
-                                                            }
+                                                            input={inputObj}
+                                                            output={outputObj}
                                                         />
                                                     );
                                                 }
@@ -151,13 +212,27 @@ function ChatInterface() {
                         </div>
                     ))
                 )}
-                {status === "streaming" && messages[messages.length - 1]?.role === "user" && (
+                {waiting && (
                     <div className="flex justify-start">
-                        <div className="bg-zinc-100 dark:bg-zinc-800 rounded-2xl px-5 py-3.5 flex items-center gap-2">
-                            <span className="flex h-1.5 w-1.5 rounded-full bg-zinc-400 animate-bounce"></span>
-                            <span className="flex h-1.5 w-1.5 rounded-full bg-zinc-400 animate-bounce [animation-delay:0.2s]"></span>
-                            <span className="flex h-1.5 w-1.5 rounded-full bg-zinc-400 animate-bounce [animation-delay:0.4s]"></span>
-                        </div>
+                        {showDelayedLoading ? (
+                            <div className="bg-gradient-to-br from-zinc-100 to-zinc-50 dark:from-zinc-800 dark:to-zinc-800/80 rounded-2xl px-6 py-4 border border-zinc-200/50 dark:border-zinc-700/50 shadow-sm">
+                                <div className="flex items-center gap-3">
+                                    <div className="flex gap-1">
+                                        <span className="w-2 h-2 rounded-full bg-blue-500 animate-wave" />
+                                        <span className="w-2 h-2 rounded-full bg-blue-500 animate-wave [animation-delay:0.2s]" />
+                                        <span className="w-2 h-2 rounded-full bg-blue-500 animate-wave [animation-delay:0.4s]" />
+                                    </div>
+                                    <span className="text-sm font-medium text-zinc-600 dark:text-zinc-300">Thinking...</span>
+                                </div>
+                                <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">Searching articles and preparing your answer</p>
+                            </div>
+                        ) : (
+                            <div className="bg-zinc-100 dark:bg-zinc-800 rounded-2xl px-5 py-3.5 flex items-center gap-2">
+                                <span className="flex h-1.5 w-1.5 rounded-full bg-zinc-400 animate-bounce" />
+                                <span className="flex h-1.5 w-1.5 rounded-full bg-zinc-400 animate-bounce [animation-delay:0.2s]" />
+                                <span className="flex h-1.5 w-1.5 rounded-full bg-zinc-400 animate-bounce [animation-delay:0.4s]" />
+                            </div>
+                        )}
                     </div>
                 )}
             </div>
@@ -167,7 +242,7 @@ function ChatInterface() {
                 <form
                     onSubmit={(e) => {
                         e.preventDefault();
-                        if (input.trim() && status !== "streaming") {
+                        if (input.trim() && canSend) {
                             append({ role: "user", content: input.trim() });
                             setInput("");
                         }
@@ -178,16 +253,16 @@ function ChatInterface() {
                         type="text"
                         value={input}
                         onChange={(e) => setInput(e.currentTarget.value)}
-                        placeholder="Type a message..."
-                        disabled={status === "streaming"}
-                        className="w-full pl-5 pr-14 py-4 bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border-none rounded-2xl focus:ring-2 focus:ring-blue-500/50 transition-all placeholder:text-zinc-400 dark:placeholder:text-zinc-500"
+                        placeholder={canSend ? "Type a message..." : "Waiting for response..."}
+                        disabled={!canSend}
+                        className="w-full pl-5 pr-14 py-4 bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border-none rounded-2xl focus:ring-2 focus:ring-blue-500/50 transition-all placeholder:text-zinc-400 dark:placeholder:text-zinc-500 disabled:opacity-70 disabled:cursor-not-allowed"
                     />
                     <button
                         type="submit"
-                        disabled={status === "streaming" || !input.trim()}
-                        className="absolute right-2 p-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:bg-zinc-200 dark:disabled:bg-zinc-700 disabled:text-zinc-400 transition-all shadow-lg shadow-blue-200 dark:shadow-none"
+                        disabled={!canSend || !input.trim()}
+                        className="absolute right-2 p-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:bg-zinc-200 dark:disabled:bg-zinc-700 disabled:text-zinc-400 disabled:cursor-not-allowed transition-all shadow-lg shadow-blue-200 dark:shadow-none"
                     >
-                        {status === "streaming" ? (
+                        {!canSend ? (
                             <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
                                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
                                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
